@@ -130,29 +130,37 @@ export function MusicProvider({ children }) {
       setSearchResults([])
       return
     }
+
+    let finalResults = []
+
+    // 1. First attempt with Saavn API for FULL songs
     try {
-      // Direct call to Saavn API for FULL songs
-      const response = await fetch(`https://saavn.dev/api/search/songs?query=${encodeURIComponent(query)}&limit=40`)
+      const response = await fetch(`https://saavn.dev/api/search/songs?query=${encodeURIComponent(query)}&limit=20`)
       const resData = await response.json()
       
-      if (resData.success && resData.data.results && resData.data.results.length > 0) {
-        const formatted = resData.data.results.map(item => ({
+      if (resData.success && resData.data?.results?.length > 0) {
+        finalResults = resData.data.results.map(item => ({
           id: item.id,
           title: item.name,
           artist: item.artists.primary[0]?.name || 'Unknown Artist',
-          album: item.album.name,
-          duration: parseInt(item.duration),
-          url: item.downloadUrl[item.downloadUrl.length - 1].link, // Full song link
+          album: item.album?.name || 'Unknown Album',
+          duration: parseInt(item.duration) || 0,
+          url: item.downloadUrl[item.downloadUrl.length - 1].link,
           artwork: item.image[item.image.length - 1].link,
           genre: 'Popular'
         }))
-        setSearchResults(formatted)
-      } else {
-        // Fallback to iTunes ONLY if Saavn fails, but warn the user or mark as preview
-        const itunesRes = await fetch(`https://itunes.apple.com/search?term=${encodeURIComponent(query)}&entity=song&limit=20`)
+      }
+    } catch (error) {
+      console.warn("Saavn API failed, trying fallback...", error)
+    }
+
+    // 2. If Saavn fails or returns empty, fallback to iTunes
+    if (finalResults.length === 0) {
+      try {
+        const itunesRes = await fetch(`https://itunes.apple.com/search?term=${encodeURIComponent(query)}&entity=song&limit=30`)
         const itunesData = await itunesRes.json()
         if (itunesData.results) {
-          const formatted = itunesData.results.map(item => ({
+          finalResults = itunesData.results.map(item => ({
             id: item.trackId,
             title: item.trackName + ' (Preview)',
             artist: item.artistName,
@@ -162,12 +170,13 @@ export function MusicProvider({ children }) {
             artwork: item.artworkUrl100.replace('100x100', '600x600'),
             genre: item.primaryGenreName
           }))
-          setSearchResults(formatted)
         }
+      } catch (error) {
+        console.error("iTunes fallback also failed", error)
       }
-    } catch (error) {
-      console.error("Search failed", error)
     }
+
+    setSearchResults(finalResults)
   }, [])
 
   const stepTrack = useCallback(
