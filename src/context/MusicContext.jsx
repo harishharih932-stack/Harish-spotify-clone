@@ -33,6 +33,11 @@ export function MusicProvider({ children }) {
   const [queueSource, setQueueSource] = useState(mockSongs)
   const [searchResults, setSearchResults] = useState([])
 
+  const [playlists, setPlaylists] = useState(() => loadJSON(STORAGE_KEYS.playlists, []))
+  const [likedIds, setLikedIds] = useState(() => loadJSON(STORAGE_KEYS.liked, []))
+  const [recentlyPlayed, setRecentlyPlayed] = useState(() => loadJSON(STORAGE_KEYS.recent, []))
+  const [theme, setTheme] = useState(() => loadJSON(STORAGE_KEYS.theme, 'dark'))
+
   const audioRef = useRef(new Audio())
   const playNextRef = useRef()
 
@@ -70,11 +75,6 @@ export function MusicProvider({ children }) {
     document.documentElement.classList.remove('dark', 'light')
     document.documentElement.classList.add(theme)
   }, [playlists, likedIds, volume, recentlyPlayed, theme])
-
-  const [playlists, setPlaylists] = useState(() => loadJSON(STORAGE_KEYS.playlists, []))
-  const [likedIds, setLikedIds] = useState(() => loadJSON(STORAGE_KEYS.liked, []))
-  const [recentlyPlayed, setRecentlyPlayed] = useState(() => loadJSON(STORAGE_KEYS.recent, []))
-  const [theme, setTheme] = useState(() => loadJSON(STORAGE_KEYS.theme, 'dark'))
 
   const addToRecent = useCallback((song) => {
     setRecentlyPlayed((prev) => {
@@ -127,7 +127,6 @@ export function MusicProvider({ children }) {
       return
     }
     try {
-      // Using a more reliable API for full length songs (Unofficial Saavn API)
       const response = await fetch(`https://saavn.dev/api/search/songs?query=${encodeURIComponent(query)}`)
       const data = await response.json()
       
@@ -137,9 +136,9 @@ export function MusicProvider({ children }) {
           title: item.name,
           artist: item.artists.primary[0]?.name || 'Unknown Artist',
           album: item.album.name,
-          duration: item.duration, // Full duration in seconds
-          url: item.downloadUrl[item.downloadUrl.length - 1].link, // Highest quality
-          artwork: item.image[item.image.length - 1].link, // Highest quality
+          duration: item.duration,
+          url: item.downloadUrl[item.downloadUrl.length - 1].link,
+          artwork: item.image[item.image.length - 1].link,
           genre: 'Pop'
         }))
         setSearchResults(formatted)
