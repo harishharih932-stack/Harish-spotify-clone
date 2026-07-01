@@ -131,78 +131,67 @@ export function MusicProvider({ children }) {
       return
     }
 
-    let finalResults = []
-    
-    // Try multiple Saavn API endpoints for full songs
-    const apiEndpoints = [
-      `https://saavn.me/api/search/songs?query=${encodeURIComponent(query)}&limit=25`,
-      `https://saavn.dev/api/search/songs?query=${encodeURIComponent(query)}&limit=25`,
-      `https://jiosaavn-api-v3.vercel.app/search/songs?query=${encodeURIComponent(query)}`
-    ]
+    try {
+      // 1. Trying a very reliable Saavn API endpoint for FULL songs
+      const response = await fetch(`https://saavn.dev/api/search/songs?query=${encodeURIComponent(query)}&limit=20`)
+      const resData = await response.json()
+      
+      if (resData.success && resData.data?.results?.length > 0) {
+        const formatted = resData.data.results.map(item => {
+          // Highest quality audio link
+          const downloadUrlObj = item.downloadUrl?.find(d => d.quality === '320kbps') || 
+                               item.downloadUrl?.[item.downloadUrl.length - 1];
+          const url = downloadUrlObj?.link || downloadUrlObj;
 
-    for (const url of apiEndpoints) {
-      try {
-        const response = await fetch(url)
-        const resData = await response.json()
-        
-        const results = resData.data?.results || resData.data || (Array.isArray(resData) ? resData : null)
+          // Highest quality artwork
+          const imageObj = item.image?.find(i => i.quality === '500x500') || 
+                           item.image?.[item.image.length - 1];
+          const artwork = imageObj?.link || imageObj;
 
-        if (results && Array.isArray(results) && results.length > 0) {
-          finalResults = results.map(item => {
-            // Pick high quality audio
-            const downloadUrl = Array.isArray(item.downloadUrl) 
-              ? (item.downloadUrl.find(d => d.quality === '320kbps')?.link || item.downloadUrl[item.downloadUrl.length - 1].link)
-              : item.downloadUrl
+          return {
+            id: item.id,
+            title: item.name,
+            artist: item.artists?.primary?.[0]?.name || 'Unknown Artist',
+            album: item.album?.name || '',
+            duration: parseInt(item.duration),
+            url: url,
+            artwork: artwork,
+            genre: 'Full Song',
+            isFull: true
+          }
+        }).filter(s => s.url);
 
-            // Pick high quality image
-            const artwork = Array.isArray(item.image)
-              ? (item.image.find(i => i.quality === '500x500')?.link || item.image[item.image.length - 1].link)
-              : item.image
-
-            return {
-              id: item.id || Math.random().toString(),
-              title: item.name || item.title || 'Unknown Title',
-              artist: (item.artists?.primary?.[0]?.name) || (item.artist) || 'Unknown Artist',
-              album: (item.album?.name || item.album) || 'Unknown Album',
-              duration: parseInt(item.duration) || 0,
-              url: downloadUrl,
-              artwork: artwork,
-              genre: 'Music',
-              isFull: true
-            }
-          }).filter(s => s.url) // Only keep results with a play URL
-
-          if (finalResults.length > 0) break 
+        if (formatted.length > 0) {
+          setSearchResults(formatted);
+          return; // STOP here if we found full songs
         }
-      } catch (err) {
-        console.warn(`API ${url} failed`)
       }
+    } catch (error) {
+      console.error("Saavn API Error:", error)
     }
 
-    // Fallback only if all full-song APIs fail
-    if (finalResults.length === 0) {
-      try {
-        const itunesRes = await fetch(`https://itunes.apple.com/search?term=${encodeURIComponent(query)}&entity=song&limit=30`)
-        const itunesData = await itunesRes.json()
-        if (itunesData.results) {
-          finalResults = itunesData.results.map(item => ({
-            id: item.trackId,
-            title: item.trackName + ' (30s Preview)',
-            artist: item.artistName,
-            album: item.collectionName,
-            duration: 30,
-            url: item.previewUrl,
-            artwork: item.artworkUrl100.replace('100x100', '600x600'),
-            genre: item.primaryGenreName,
-            isFull: false
-          }))
-        }
-      } catch (error) {
-        console.error("All APIs failed")
+    // 2. FALLBACK to iTunes ONLY if Saavn found NOTHING
+    try {
+      const itunesRes = await fetch(`https://itunes.apple.com/search?term=${encodeURIComponent(query)}&entity=song&limit=30`)
+      const itunesData = await itunesRes.json()
+      if (itunesData.results) {
+        const formatted = itunesData.results.map(item => ({
+          id: item.trackId,
+          title: item.trackName + ' (Preview Only)',
+          artist: item.artistName,
+          album: item.collectionName,
+          duration: 30,
+          url: item.previewUrl,
+          artwork: item.artworkUrl100.replace('100x100', '600x600'),
+          genre: 'Preview',
+          isFull: false
+        }))
+        setSearchResults(formatted)
       }
+    } catch (error) {
+      console.error("Fallback search failed:", error)
+      setSearchResults([])
     }
-
-    setSearchResults(finalResults)
   }, [])
 
   const stepTrack = useCallback(
