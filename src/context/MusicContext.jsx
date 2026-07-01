@@ -106,12 +106,8 @@ export function MusicProvider({ children }) {
       if (audioUrl) {
         audioRef.current.src = audioUrl
         audioRef.current.load()
-        audioRef.current.play().then(() => {
-            setIsPlaying(true)
-        }).catch(e => {
-            console.error("Playback failed", e)
-            setIsPlaying(false)
-        })
+        audioRef.current.play().catch(e => console.error("Playback failed", e))
+        setIsPlaying(true)
       }
       
       addToRecent(song)
@@ -134,63 +130,43 @@ export function MusicProvider({ children }) {
       setSearchResults([])
       return
     }
-    
-    // Try multiple Saavn API endpoints for better reliability
-    const saavnEndpoints = [
-        `https://saavn.dev/api/search/songs?query=${encodeURIComponent(query)}&limit=30`,
-        `https://jio-saavn-api.vercel.app/search/songs?query=${encodeURIComponent(query)}&limit=30`
-    ]
-
-    for (const url of saavnEndpoints) {
-        try {
-            const response = await fetch(url)
-            const resData = await response.json()
-            
-            // Handle different API response structures
-            const songs = resData.data?.results || resData.results || resData.data
-            
-            if (songs && Array.isArray(songs) && songs.length > 0) {
-                const formatted = songs.map(item => ({
-                    id: item.id,
-                    title: (item.name || item.title || 'Unknown').replace(/&quot;/g, '"').replace(/&amp;/g, '&'),
-                    artist: (item.artists?.primary?.[0]?.name || item.primaryArtists || item.artist || 'Unknown Artist'),
-                    album: (item.album?.name || item.album || 'Unknown Album').replace(/&quot;/g, '"'),
-                    duration: parseInt(item.duration),
-                    url: item.downloadUrl?.[item.downloadUrl.length - 1]?.link || item.downloadUrl?.[0]?.link || item.media_url || item.url,
-                    artwork: (item.image?.[item.image.length - 1]?.link || item.image?.[0]?.link || item.image || '').replace('150x150', '500x500'),
-                    genre: 'Music'
-                })).filter(s => s.url) // Only keep if it has a URL
-
-                if (formatted.length > 0) {
-                    setSearchResults(formatted)
-                    return // Success!
-                }
-            }
-        } catch (e) {
-            console.error(`Search failed for ${url}`, e)
-        }
-    }
-
-    // Last resort: iTunes (30s previews)
     try {
-      const itunesRes = await fetch(`https://itunes.apple.com/search?term=${encodeURIComponent(query)}&entity=song&limit=30`)
-      const itunesData = await itunesRes.json()
+      // Direct call to Saavn API for FULL songs
+      const response = await fetch(`https://saavn.dev/api/search/songs?query=${encodeURIComponent(query)}&limit=40`)
+      const resData = await response.json()
       
-      if (itunesData.results) {
-        const formatted = itunesData.results.map(item => ({
-          id: item.trackId,
-          title: item.trackName,
-          artist: item.artistName,
-          album: item.collectionName,
-          duration: Math.floor(item.trackTimeMillis / 1000),
-          url: item.previewUrl,
-          artwork: item.artworkUrl100.replace('100x100', '600x600'),
-          genre: item.primaryGenreName
+      if (resData.success && resData.data.results && resData.data.results.length > 0) {
+        const formatted = resData.data.results.map(item => ({
+          id: item.id,
+          title: item.name,
+          artist: item.artists.primary[0]?.name || 'Unknown Artist',
+          album: item.album.name,
+          duration: parseInt(item.duration),
+          url: item.downloadUrl[item.downloadUrl.length - 1].link, // Full song link
+          artwork: item.image[item.image.length - 1].link,
+          genre: 'Popular'
         }))
         setSearchResults(formatted)
+      } else {
+        // Fallback to iTunes ONLY if Saavn fails, but warn the user or mark as preview
+        const itunesRes = await fetch(`https://itunes.apple.com/search?term=${encodeURIComponent(query)}&entity=song&limit=20`)
+        const itunesData = await itunesRes.json()
+        if (itunesData.results) {
+          const formatted = itunesData.results.map(item => ({
+            id: item.trackId,
+            title: item.trackName + ' (Preview)',
+            artist: item.artistName,
+            album: item.collectionName,
+            duration: 30,
+            url: item.previewUrl,
+            artwork: item.artworkUrl100.replace('100x100', '600x600'),
+            genre: item.primaryGenreName
+          }))
+          setSearchResults(formatted)
+        }
       }
     } catch (error) {
-      console.error("All search methods failed", error)
+      console.error("Search failed", error)
     }
   }, [])
 
