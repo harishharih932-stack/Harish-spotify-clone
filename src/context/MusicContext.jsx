@@ -50,9 +50,9 @@ export function MusicProvider({ children }) {
 
     const onTimeUpdate = () => setCurrentTime(audio.currentTime)
     const onDurationChange = () => {
-        if (audio.duration && isFinite(audio.duration)) {
-            setDuration(audio.duration)
-        }
+      if (audio.duration && isFinite(audio.duration)) {
+        setDuration(audio.duration)
+      }
     }
     const onEnded = () => {
       if (playNextRef.current) playNextRef.current()
@@ -106,8 +106,12 @@ export function MusicProvider({ children }) {
       if (audioUrl) {
         audioRef.current.src = audioUrl
         audioRef.current.load()
-        audioRef.current.play().catch(e => console.error("Playback failed", e))
-        setIsPlaying(true)
+        audioRef.current.play().then(() => {
+            setIsPlaying(true)
+        }).catch(e => {
+            console.error("Playback failed", e)
+            setIsPlaying(false)
+        })
       }
       
       addToRecent(song)
@@ -130,26 +134,50 @@ export function MusicProvider({ children }) {
       setSearchResults([])
       return
     }
+    
+    // First try Saavn for full songs
     try {
-      // Trying iTunes first as it's more stable for search
-      const response = await fetch(`https://itunes.apple.com/search?term=${encodeURIComponent(query)}&entity=song&limit=30`)
-      const data = await response.json()
+      const saavnRes = await fetch(`https://saavn.dev/api/search/songs?query=${encodeURIComponent(query)}&limit=25`)
+      const saavnData = await saavnRes.json()
       
-      if (data.results) {
-        const formatted = data.results.map(item => ({
+      if (saavnData.success && saavnData.data.results && saavnData.data.results.length > 0) {
+        const formatted = saavnData.data.results.map(item => ({
+          id: item.id,
+          title: item.name.replace(/&quot;/g, '"').replace(/&amp;/g, '&'),
+          artist: item.artists.primary[0]?.name || 'Unknown Artist',
+          album: item.album.name.replace(/&quot;/g, '"'),
+          duration: item.duration,
+          url: item.downloadUrl[item.downloadUrl.length - 1].link, 
+          artwork: item.image[item.image.length - 1].link,
+          genre: 'Popular'
+        }))
+        setSearchResults(formatted)
+        return // Success, exit
+      }
+    } catch (e) {
+      console.error("Saavn search failed", e)
+    }
+
+    // Fallback to iTunes if Saavn fails
+    try {
+      const itunesRes = await fetch(`https://itunes.apple.com/search?term=${encodeURIComponent(query)}&entity=song&limit=30`)
+      const itunesData = await itunesRes.json()
+      
+      if (itunesData.results) {
+        const formatted = itunesData.results.map(item => ({
           id: item.trackId,
           title: item.trackName,
           artist: item.artistName,
           album: item.collectionName,
           duration: Math.floor(item.trackTimeMillis / 1000),
-          previewUrl: item.previewUrl,
+          url: item.previewUrl,
           artwork: item.artworkUrl100.replace('100x100', '600x600'),
           genre: item.primaryGenreName
         }))
         setSearchResults(formatted)
       }
     } catch (error) {
-      console.error("Search failed", error)
+      console.error("All search methods failed", error)
     }
   }, [])
 
@@ -194,9 +222,9 @@ export function MusicProvider({ children }) {
 
   const seekTo = useCallback((percent) => {
     if (audioRef.current.duration) {
-        const target = (percent / 100) * audioRef.current.duration
-        audioRef.current.currentTime = target
-        setCurrentTime(target)
+      const target = (percent / 100) * audioRef.current.duration
+      audioRef.current.currentTime = target
+      setCurrentTime(target)
     }
   }, [])
 
