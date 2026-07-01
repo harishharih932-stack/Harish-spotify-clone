@@ -102,7 +102,7 @@ export function MusicProvider({ children }) {
         return
       }
 
-      console.log("Playing:", song.title, "URL:", song.url || song.previewUrl);
+      console.log("Playing Full Song:", song.title, "Length:", song.duration, "seconds");
       
       setCurrentSong(song)
       setQueueSource(source)
@@ -138,32 +138,29 @@ export function MusicProvider({ children }) {
       return
     }
 
+    console.log("Searching for:", query);
+
+    // Primary API: JioSaavn (Full Songs)
     try {
-      // Bahi, ye server 100% full gaana deta hai (Tested API)
       const response = await fetch(`https://saavn.dev/api/search/songs?query=${encodeURIComponent(query)}&limit=30`)
       const res = await response.json()
       
-      if (res.status === 'SUCCESS' || res.success) {
-        const rawData = res.data?.results || res.data || []
-        const formatted = rawData.map(item => {
-          // Find 320kbps or best available quality
-          const downloadUrl = Array.isArray(item.downloadUrl) 
-            ? (item.downloadUrl.find(d => d.quality === '320kbps')?.link || item.downloadUrl[item.downloadUrl.length - 1].link)
-            : item.downloadUrl;
-
-          const artwork = Array.isArray(item.image)
-            ? (item.image.find(i => i.quality === '500x500')?.link || item.image[item.image.length - 1].link)
-            : item.image;
+      if (res.success && res.data?.results?.length > 0) {
+        console.log("Full songs found!");
+        const formatted = res.data.results.map(item => {
+          // Get the best quality download link (usually 320kbps is at the end)
+          const downloadUrl = item.downloadUrl[item.downloadUrl.length - 1].link;
+          const artwork = item.image[item.image.length - 1].link;
 
           return {
-            id: item.id || Math.random().toString(),
-            title: item.name || item.title,
+            id: item.id,
+            title: item.name,
             artist: item.artists?.primary?.[0]?.name || 'Unknown Artist',
             album: item.album?.name || '',
             duration: parseInt(item.duration) || 0,
             url: downloadUrl,
             artwork: artwork,
-            genre: 'Full Song',
+            genre: 'Music',
             isFull: true
           }
         }).filter(s => s.url);
@@ -174,17 +171,47 @@ export function MusicProvider({ children }) {
         }
       }
     } catch (error) {
-      console.warn("Full song API error, using backup search...");
+      console.warn("Full song API failed, trying alternate...");
     }
 
-    // Fallback to iTunes (30s Preview) only if Saavn fails
+    // Alternate Full Song API
     try {
+      const response = await fetch(`https://jiosaavn-api-v3.vercel.app/search/songs?query=${encodeURIComponent(query)}`)
+      const res = await response.json()
+      const results = res.data?.results || res.data || [];
+
+      if (results.length > 0) {
+        console.log("Full songs found via alternate!");
+        const formatted = results.map(item => ({
+          id: item.id,
+          title: item.name,
+          artist: item.artists?.primary?.[0]?.name || 'Unknown Artist',
+          album: item.album?.name || '',
+          duration: parseInt(item.duration) || 0,
+          url: item.downloadUrl[item.downloadUrl.length - 1].link,
+          artwork: item.image[item.image.length - 1].link,
+          genre: 'Music',
+          isFull: true
+        })).filter(s => s.url);
+
+        if (formatted.length > 0) {
+          setSearchResults(formatted)
+          return
+        }
+      }
+    } catch (error) {
+      console.warn("Alternate full song API also failed.");
+    }
+
+    // Last Resort: iTunes (Only 30s Previews)
+    try {
+      console.log("Falling back to iTunes (30s previews)");
       const itunesRes = await fetch(`https://itunes.apple.com/search?term=${encodeURIComponent(query)}&entity=song&limit=20`)
       const itunesData = await itunesRes.json()
       if (itunesData.results) {
         setSearchResults(itunesData.results.map(item => ({
           id: item.trackId.toString(),
-          title: item.trackName + ' (30s Preview)',
+          title: item.trackName + ' (30s Preview Only)',
           artist: item.artistName,
           album: item.collectionName,
           duration: 30,
