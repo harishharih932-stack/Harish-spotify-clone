@@ -32,6 +32,7 @@ export function MusicProvider({ children }) {
   const [repeat, setRepeat] = useState(false)
   const [queueSource, setQueueSource] = useState(mockSongs)
   const [searchResults, setSearchResults] = useState([])
+  const [isSearching, setIsSearching] = useState(false)
 
   const [playlists, setPlaylists] = useState(() => loadJSON(STORAGE_KEYS.playlists, []))
   const [likedIds, setLikedIds] = useState(() => loadJSON(STORAGE_KEYS.liked, []))
@@ -130,85 +131,79 @@ export function MusicProvider({ children }) {
       setSearchResults([])
       return
     }
-
-    // Helper to extract clean URL from Saavn data
-    const getUrl = (item) => {
-      if (!item.downloadUrl) return null;
-      if (Array.isArray(item.downloadUrl)) {
-        const high = item.downloadUrl.find(d => d.quality === '320kbps') || item.downloadUrl[item.downloadUrl.length - 1];
-        return high.link || high;
-      }
-      return item.downloadUrl;
-    };
-
-    const getImg = (item) => {
-      if (!item.image) return null;
-      if (Array.isArray(item.image)) {
-        const high = item.image.find(i => i.quality === '500x500') || item.image[item.image.length - 1];
-        return high.link || high;
-      }
-      return item.image;
-    };
+    setIsSearching(true)
 
     try {
-      // Trying the most stable Saavn API URL
-      const response = await fetch(`https://saavn.dev/api/search/songs?query=${encodeURIComponent(query)}&limit=25`);
-      const resData = await response.json();
+      // 1. Primary Full Song API
+      const response = await fetch(`https://saavn.dev/api/search/songs?query=${encodeURIComponent(query)}&limit=30`)
+      const resData = await response.json()
       
       if (resData.success && resData.data?.results?.length > 0) {
-        const formatted = resData.data.results.map(item => ({
+        const formatted = resData.data.results.map(item => {
+          // Robustly get the highest quality download link
+          const downloadUrl = Array.isArray(item.downloadUrl) 
+            ? (item.downloadUrl.find(d => d.quality === '320kbps')?.link || 
+               item.downloadUrl[item.downloadUrl.length - 1]?.link)
+            : item.downloadUrl;
+
+          // Robustly get the highest quality image
+          const artwork = Array.isArray(item.image)
+            ? (item.image.find(i => i.quality === '500x500')?.link || 
+               item.image[item.image.length - 1]?.link)
+            : item.image;
+
+          return {
+            id: item.id,
+            title: item.name,
+            artist: item.artists?.primary?.[0]?.name || 'Various Artists',
+            album: item.album?.name || '',
+            duration: parseInt(item.duration) || 0,
+            url: downloadUrl,
+            artwork: artwork,
+            genre: 'Full Song',
+            isFull: true
+          }
+        }).filter(s => s.url); // Only keep songs that actually have a link
+
+        if (formatted.length > 0) {
+          setSearchResults(formatted)
+          setIsSearching(false)
+          return
+        }
+      }
+      
+      // 2. Secondary Full Song API (Alternate instance)
+      const altResponse = await fetch(`https://saavn.me/search/songs?query=${encodeURIComponent(query)}`)
+      const altData = await altResponse.json()
+      const altResults = altData.data?.results || altData.data;
+
+      if (altResults && Array.isArray(altResults) && altResults.length > 0) {
+        const formatted = altResults.map(item => ({
           id: item.id,
           title: item.name,
-          artist: item.artists?.primary?.[0]?.name || 'Unknown Artist',
+          artist: item.artists?.primary?.[0]?.name || 'Various Artists',
           album: item.album?.name || '',
-          duration: parseInt(item.duration),
-          url: getUrl(item),
-          artwork: getImg(item),
+          duration: parseInt(item.duration) || 0,
+          url: Array.isArray(item.downloadUrl) ? item.downloadUrl[item.downloadUrl.length - 1].link : item.downloadUrl,
+          artwork: Array.isArray(item.image) ? item.image[item.image.length - 1].link : item.image,
           genre: 'Full Song',
           isFull: true
         })).filter(s => s.url);
 
         if (formatted.length > 0) {
-          setSearchResults(formatted);
-          return;
+          setSearchResults(formatted)
+          setIsSearching(false)
+          return
         }
       }
-    } catch (error) {
-      console.warn("Saavn API Primary failed, trying backup...");
-    }
 
-    // 2. Backup Saavn API
-    try {
-      const response = await fetch(`https://saavn.me/api/search/songs?query=${encodeURIComponent(query)}`);
-      const resData = await response.json();
-      const results = resData.data?.results || resData.data;
-      if (results && results.length > 0) {
-        const formatted = results.map(item => ({
-          id: item.id,
-          title: item.name,
-          artist: item.artists?.primary?.[0]?.name || 'Unknown Artist',
-          album: item.album?.name || '',
-          duration: parseInt(item.duration),
-          url: getUrl(item),
-          artwork: getImg(item),
-          genre: 'Full Song',
-          isFull: true
-        })).filter(s => s.url);
-        if (formatted.length > 0) {
-          setSearchResults(formatted);
-          return;
-        }
-      }
-    } catch (error) {}
-
-    // 3. Fallback to iTunes ONLY if both Saavn APIs fail
-    try {
+      // 3. iTunes Fallback (Only if both Saavn APIs fail)
       const itunesRes = await fetch(`https://itunes.apple.com/search?term=${encodeURIComponent(query)}&entity=song&limit=30`)
       const itunesData = await itunesRes.json()
       if (itunesData.results) {
         const formatted = itunesData.results.map(item => ({
           id: item.trackId,
-          title: item.trackName + ' (30s Preview Only)',
+          title: item.trackName + ' (Preview Only)',
           artist: item.artistName,
           album: item.collectionName,
           duration: 30,
@@ -220,7 +215,9 @@ export function MusicProvider({ children }) {
         setSearchResults(formatted)
       }
     } catch (error) {
-      setSearchResults([])
+      console.error("All search APIs failed", error)
+    } finally {
+      setIsSearching(false)
     }
   }, [])
 
@@ -324,6 +321,7 @@ export function MusicProvider({ children }) {
     toggleTheme,
     searchResults,
     searchSongs,
+    isSearching
   }
 
   return <MusicContext.Provider value={value}>{children}</MusicContext.Provider>
