@@ -49,7 +49,11 @@ export function MusicProvider({ children }) {
     const audio = audioRef.current
 
     const onTimeUpdate = () => setCurrentTime(audio.currentTime)
-    const onDurationChange = () => setDuration(audio.duration)
+    const onDurationChange = () => {
+        if (audio.duration && isFinite(audio.duration)) {
+            setDuration(audio.duration)
+        }
+    }
     const onEnded = () => {
       if (playNextRef.current) playNextRef.current()
     }
@@ -65,7 +69,6 @@ export function MusicProvider({ children }) {
     }
   }, [])
 
-  // LocalStorage persistence
   useEffect(() => {
     localStorage.setItem(STORAGE_KEYS.playlists, JSON.stringify(playlists))
     localStorage.setItem(STORAGE_KEYS.liked, JSON.stringify(likedIds))
@@ -99,8 +102,9 @@ export function MusicProvider({ children }) {
       setCurrentSong(song)
       setQueueSource(source)
       
-      if (song.url) {
-        audioRef.current.src = song.url
+      const audioUrl = song.url || song.previewUrl
+      if (audioUrl) {
+        audioRef.current.src = audioUrl
         audioRef.current.load()
         audioRef.current.play().catch(e => console.error("Playback failed", e))
         setIsPlaying(true)
@@ -127,19 +131,20 @@ export function MusicProvider({ children }) {
       return
     }
     try {
-      const response = await fetch(`https://saavn.dev/api/search/songs?query=${encodeURIComponent(query)}`)
+      // Trying iTunes first as it's more stable for search
+      const response = await fetch(`https://itunes.apple.com/search?term=${encodeURIComponent(query)}&entity=song&limit=30`)
       const data = await response.json()
       
-      if (data.success && data.data.results) {
-        const formatted = data.data.results.map(item => ({
-          id: item.id,
-          title: item.name,
-          artist: item.artists.primary[0]?.name || 'Unknown Artist',
-          album: item.album.name,
-          duration: item.duration,
-          url: item.downloadUrl[item.downloadUrl.length - 1].link,
-          artwork: item.image[item.image.length - 1].link,
-          genre: 'Pop'
+      if (data.results) {
+        const formatted = data.results.map(item => ({
+          id: item.trackId,
+          title: item.trackName,
+          artist: item.artistName,
+          album: item.collectionName,
+          duration: Math.floor(item.trackTimeMillis / 1000),
+          previewUrl: item.previewUrl,
+          artwork: item.artworkUrl100.replace('100x100', '600x600'),
+          genre: item.primaryGenreName
         }))
         setSearchResults(formatted)
       }
@@ -188,9 +193,11 @@ export function MusicProvider({ children }) {
   }, [playNext])
 
   const seekTo = useCallback((percent) => {
-    const target = (percent / 100) * audioRef.current.duration
-    audioRef.current.currentTime = target
-    setCurrentTime(target)
+    if (audioRef.current.duration) {
+        const target = (percent / 100) * audioRef.current.duration
+        audioRef.current.currentTime = target
+        setCurrentTime(target)
+    }
   }, [])
 
   const setVolume = useCallback((v) => setVolumeState(v), [])
