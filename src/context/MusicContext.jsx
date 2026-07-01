@@ -1,5 +1,5 @@
 import { createContext, useContext, useEffect, useRef, useState, useCallback } from 'react'
-import { songs, genreGradients } from '../data/songs'
+import { songs as mockSongs, genreGradients } from '../data/songs'
 
 const MusicContext = createContext(null)
 
@@ -25,71 +25,56 @@ const PALETTE = Object.values(genreGradients)
 export function MusicProvider({ children }) {
   const [currentSong, setCurrentSong] = useState(null)
   const [isPlaying, setIsPlaying] = useState(false)
-  const [progress, setProgress] = useState(0) // 0–100
+  const [currentTime, setCurrentTime] = useState(0)
+  const [duration, setDuration] = useState(0)
   const [volume, setVolumeState] = useState(() => loadJSON(STORAGE_KEYS.volume, 70))
   const [shuffle, setShuffle] = useState(false)
-  const [repeat, setRepeat] = useState(false) // repeat-one
-  const [queueSource, setQueueSource] = useState(songs) // list currentSong was played from
+  const [repeat, setRepeat] = useState(false)
+  const [queueSource, setQueueSource] = useState(mockSongs)
   const [searchResults, setSearchResults] = useState([])
 
   const audioRef = useRef(new Audio())
-  const intervalRef = useRef(null)
+  const playNextRef = useRef()
 
-  const [playlists, setPlaylists] = useState(() =>
-    loadJSON(STORAGE_KEYS.playlists, [
-      {
-        id: 'starter',
-        name: 'Late Night Drive',
-        songIds: [1, 3, 20, 22, 26],
-        createdAt: Date.now(),
-        gradient: PALETTE[0],
-      },
-    ])
-  )
-  const [likedIds, setLikedIds] = useState(() => loadJSON(STORAGE_KEYS.liked, [4, 9, 31]))
-  const [recentlyPlayed, setRecentlyPlayed] = useState(() => loadJSON(STORAGE_KEYS.recent, []))
-  const [theme, setTheme] = useState(() => loadJSON(STORAGE_KEYS.theme, 'dark'))
-
-  // Update volume
   useEffect(() => {
     audioRef.current.volume = volume / 100
   }, [volume])
 
-  const playNextRef = useRef()
-
-  // Audio event listeners
   useEffect(() => {
     const audio = audioRef.current
 
-    const onTimeUpdate = () => {
-      if (audio.duration) {
-        setProgress((audio.currentTime / audio.duration) * 100)
-      }
-    }
-
+    const onTimeUpdate = () => setCurrentTime(audio.currentTime)
+    const onDurationChange = () => setDuration(audio.duration)
     const onEnded = () => {
-      playNextRef.current?.()
+      if (playNextRef.current) playNextRef.current()
     }
 
     audio.addEventListener('timeupdate', onTimeUpdate)
+    audio.addEventListener('durationchange', onDurationChange)
     audio.addEventListener('ended', onEnded)
 
     return () => {
       audio.removeEventListener('timeupdate', onTimeUpdate)
+      audio.removeEventListener('durationchange', onDurationChange)
       audio.removeEventListener('ended', onEnded)
     }
   }, [])
 
-  // Persist to localStorage
-  useEffect(() => localStorage.setItem(STORAGE_KEYS.playlists, JSON.stringify(playlists)), [playlists])
-  useEffect(() => localStorage.setItem(STORAGE_KEYS.liked, JSON.stringify(likedIds)), [likedIds])
-  useEffect(() => localStorage.setItem(STORAGE_KEYS.volume, JSON.stringify(volume)), [volume])
-  useEffect(() => localStorage.setItem(STORAGE_KEYS.recent, JSON.stringify(recentlyPlayed)), [recentlyPlayed])
+  // LocalStorage persistence
   useEffect(() => {
+    localStorage.setItem(STORAGE_KEYS.playlists, JSON.stringify(playlists))
+    localStorage.setItem(STORAGE_KEYS.liked, JSON.stringify(likedIds))
+    localStorage.setItem(STORAGE_KEYS.volume, JSON.stringify(volume))
+    localStorage.setItem(STORAGE_KEYS.recent, JSON.stringify(recentlyPlayed))
     localStorage.setItem(STORAGE_KEYS.theme, JSON.stringify(theme))
     document.documentElement.classList.remove('dark', 'light')
     document.documentElement.classList.add(theme)
-  }, [theme])
+  }, [playlists, likedIds, volume, recentlyPlayed, theme])
+
+  const [playlists, setPlaylists] = useState(() => loadJSON(STORAGE_KEYS.playlists, []))
+  const [likedIds, setLikedIds] = useState(() => loadJSON(STORAGE_KEYS.liked, []))
+  const [recentlyPlayed, setRecentlyPlayed] = useState(() => loadJSON(STORAGE_KEYS.recent, []))
+  const [theme, setTheme] = useState(() => loadJSON(STORAGE_KEYS.theme, 'dark'))
 
   const addToRecent = useCallback((song) => {
     setRecentlyPlayed((prev) => {
@@ -99,14 +84,13 @@ export function MusicProvider({ children }) {
   }, [])
 
   const playSong = useCallback(
-    (song, source = songs) => {
+    (song, source = mockSongs) => {
       if (currentSong?.id === song.id) {
-        // Just toggle play if it's the same song
         if (isPlaying) {
           audioRef.current.pause()
           setIsPlaying(false)
         } else {
-          audioRef.current.play().catch(e => console.error("Playback failed", e))
+          audioRef.current.play().catch(() => {})
           setIsPlaying(true)
         }
         return
@@ -115,13 +99,10 @@ export function MusicProvider({ children }) {
       setCurrentSong(song)
       setQueueSource(source)
       
-      if (song.previewUrl) {
-        audioRef.current.src = song.previewUrl
+      if (song.url) {
+        audioRef.current.src = song.url
+        audioRef.current.load()
         audioRef.current.play().catch(e => console.error("Playback failed", e))
-        setIsPlaying(true)
-      } else {
-        // Fallback for mock songs if any remain
-        audioRef.current.currentTime = 0
         setIsPlaying(true)
       }
       
@@ -131,18 +112,14 @@ export function MusicProvider({ children }) {
   )
 
   const togglePlay = useCallback(() => {
-    if (!currentSong) {
-      if (songs.length) playSong(songs[0])
-      return
-    }
-
+    if (!currentSong) return
     if (isPlaying) {
       audioRef.current.pause()
     } else {
-      audioRef.current.play().catch(e => console.error("Playback failed", e))
+      audioRef.current.play().catch(() => {})
     }
-    setIsPlaying((p) => !p)
-  }, [currentSong, isPlaying, playSong])
+    setIsPlaying(!isPlaying)
+  }, [currentSong, isPlaying])
 
   const searchSongs = useCallback(async (query) => {
     if (!query) {
@@ -150,19 +127,23 @@ export function MusicProvider({ children }) {
       return
     }
     try {
-      const response = await fetch(`https://itunes.apple.com/search?term=${encodeURIComponent(query)}&entity=song&limit=20`)
+      // Using a more reliable API for full length songs (Unofficial Saavn API)
+      const response = await fetch(`https://saavn.dev/api/search/songs?query=${encodeURIComponent(query)}`)
       const data = await response.json()
-      const formatted = data.results.map(item => ({
-        id: item.trackId,
-        title: item.trackName,
-        artist: item.artistName,
-        album: item.collectionName,
-        duration: Math.floor(item.trackTimeMillis / 1000),
-        previewUrl: item.previewUrl,
-        artwork: item.artworkUrl100.replace('100x100', '400x400'),
-        genre: item.primaryGenreName
-      }))
-      setSearchResults(formatted)
+      
+      if (data.success && data.data.results) {
+        const formatted = data.data.results.map(item => ({
+          id: item.id,
+          title: item.name,
+          artist: item.artists.primary[0]?.name || 'Unknown Artist',
+          album: item.album.name,
+          duration: item.duration, // Full duration in seconds
+          url: item.downloadUrl[item.downloadUrl.length - 1].link, // Highest quality
+          artwork: item.image[item.image.length - 1].link, // Highest quality
+          genre: 'Pop'
+        }))
+        setSearchResults(formatted)
+      }
     } catch (error) {
       console.error("Search failed", error)
     }
@@ -171,11 +152,12 @@ export function MusicProvider({ children }) {
   const stepTrack = useCallback(
     (direction) => {
       if (!currentSong) return
-      const list = queueSource.length ? queueSource : songs
+      const list = queueSource.length ? queueSource : mockSongs
       const idx = list.findIndex((s) => s.id === currentSong.id)
+      if (idx === -1) return
+      
       if (shuffle) {
         let randomIdx = Math.floor(Math.random() * list.length)
-        if (list.length > 1 && randomIdx === idx) randomIdx = (randomIdx + 1) % list.length
         playSong(list[randomIdx], list)
         return
       }
@@ -186,42 +168,37 @@ export function MusicProvider({ children }) {
   )
 
   const playNext = useCallback(() => {
-    if (repeat && currentSong) {
-      setProgress(0)
-      setIsPlaying(true)
+    if (repeat) {
+      audioRef.current.currentTime = 0
+      audioRef.current.play()
       return
     }
     stepTrack(1)
-  }, [repeat, currentSong, stepTrack])
+  }, [repeat, stepTrack])
 
   const playPrev = useCallback(() => {
-    // If we're more than 3s into the track, restart it instead of skipping back
-    if (currentSong && audioRef.current.currentTime > 3) {
-      setProgress(0)
+    if (audioRef.current.currentTime > 3) {
+      audioRef.current.currentTime = 0
       return
     }
     stepTrack(-1)
-  }, [stepTrack, currentSong, progress])
+  }, [stepTrack])
 
   useEffect(() => {
     playNextRef.current = playNext
   }, [playNext])
 
   const seekTo = useCallback((percent) => {
-    if (audioRef.current.duration) {
-      audioRef.current.currentTime = (percent / 100) * audioRef.current.duration
-      setProgress(percent)
-    }
+    const target = (percent / 100) * audioRef.current.duration
+    audioRef.current.currentTime = target
+    setCurrentTime(target)
   }, [])
 
   const setVolume = useCallback((v) => setVolumeState(v), [])
-
   const toggleLike = useCallback((songId) => {
     setLikedIds((prev) => (prev.includes(songId) ? prev.filter((id) => id !== songId) : [...prev, songId]))
   }, [])
-
   const isLiked = useCallback((songId) => likedIds.includes(songId), [likedIds])
-
   const createPlaylist = useCallback((name) => {
     const newPlaylist = {
       id: `pl_${Date.now()}`,
@@ -233,40 +210,18 @@ export function MusicProvider({ children }) {
     setPlaylists((prev) => [newPlaylist, ...prev])
     return newPlaylist.id
   }, [])
-
-  const deletePlaylist = useCallback((playlistId) => {
-    setPlaylists((prev) => prev.filter((p) => p.id !== playlistId))
-  }, [])
-
-  const renamePlaylist = useCallback((playlistId, name) => {
-    setPlaylists((prev) => prev.map((p) => (p.id === playlistId ? { ...p, name } : p)))
-  }, [])
-
-  const addToPlaylist = useCallback((playlistId, songId) => {
-    setPlaylists((prev) =>
-      prev.map((p) =>
-        p.id === playlistId && !p.songIds.includes(songId)
-          ? { ...p, songIds: [...p.songIds, songId] }
-          : p
-      )
-    )
-  }, [])
-
-  const removeFromPlaylist = useCallback((playlistId, songId) => {
-    setPlaylists((prev) =>
-      prev.map((p) =>
-        p.id === playlistId ? { ...p, songIds: p.songIds.filter((id) => id !== songId) } : p
-      )
-    )
-  }, [])
-
+  const deletePlaylist = useCallback((playlistId) => setPlaylists((prev) => prev.filter((p) => p.id !== playlistId)), [])
+  const renamePlaylist = useCallback((playlistId, name) => setPlaylists((prev) => prev.map((p) => (p.id === playlistId ? { ...p, name } : p))), [])
+  const addToPlaylist = useCallback((playlistId, songId) => setPlaylists((prev) => prev.map((p) => p.id === playlistId && !p.songIds.includes(songId) ? { ...p, songIds: [...p.songIds, songId] } : p)), [])
+  const removeFromPlaylist = useCallback((playlistId, songId) => setPlaylists((prev) => prev.map((p) => p.id === playlistId ? { ...p, songIds: p.songIds.filter((id) => id !== songId) } : p)), [])
   const toggleTheme = useCallback(() => setTheme((t) => (t === 'dark' ? 'light' : 'dark')), [])
 
   const value = {
-    songs,
+    songs: mockSongs,
     currentSong,
     isPlaying,
-    progress,
+    currentTime,
+    duration,
     volume,
     shuffle,
     repeat,

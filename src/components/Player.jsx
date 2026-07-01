@@ -14,13 +14,13 @@ function formatTime(seconds) {
 
 export default function Player() {
   const {
-    currentSong, isPlaying, progress, volume, shuffle, repeat,
+    currentSong, isPlaying, currentTime, duration, volume, shuffle, repeat,
     togglePlay, playNext, playPrev, seekTo, setVolume,
     setShuffle, setRepeat, toggleLike, isLiked,
   } = useMusic()
 
   const VolumeIcon = volume === 0 ? VolumeX : volume < 33 ? Volume : volume < 66 ? Volume1 : Volume2
-  const currentTime = currentSong ? (progress / 100) * currentSong.duration : 0
+  const progress = duration > 0 ? (currentTime / duration) * 100 : 0
 
   return (
     <footer className="h-[72px] sm:h-20 bg-base-elevated light:bg-light-surface border-t border-base-border light:border-light-border
@@ -113,7 +113,7 @@ export default function Player() {
               background: `linear-gradient(to right, #1DB954 ${progress}%, #4a4a4a ${progress}%)`,
             }}
           />
-          <span className="text-[11px] text-neutral-400 w-9 tabular-nums">{formatTime(currentSong?.duration || 0)}</span>
+          <span className="text-[11px] text-neutral-400 w-9 tabular-nums">{formatTime(duration)}</span>
         </div>
       </div>
 
