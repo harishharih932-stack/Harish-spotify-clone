@@ -41,12 +41,10 @@ export function MusicProvider({ children }) {
   const audioRef = useRef(new Audio())
   const playNextRef = useRef()
 
-  // Sync Volume
   useEffect(() => {
     audioRef.current.volume = volume / 100
   }, [volume])
 
-  // Audio Event Listeners
   useEffect(() => {
     const audio = audioRef.current
 
@@ -71,7 +69,6 @@ export function MusicProvider({ children }) {
     }
   }, [])
 
-  // Persist State
   useEffect(() => {
     localStorage.setItem(STORAGE_KEYS.playlists, JSON.stringify(playlists))
     localStorage.setItem(STORAGE_KEYS.liked, JSON.stringify(likedIds))
@@ -102,8 +99,6 @@ export function MusicProvider({ children }) {
         return
       }
 
-      console.log("Playing Full Song:", song.title, "Length:", song.duration, "seconds");
-      
       setCurrentSong(song)
       setQueueSource(source)
       
@@ -111,8 +106,6 @@ export function MusicProvider({ children }) {
       if (audioUrl) {
         audioRef.current.src = audioUrl
         audioRef.current.load()
-        setDuration(song.duration || 0)
-        setCurrentTime(0)
         audioRef.current.play().catch(e => console.error("Playback failed", e))
         setIsPlaying(true)
       }
@@ -138,80 +131,52 @@ export function MusicProvider({ children }) {
       return
     }
 
-    console.log("Searching for:", query);
-
-    // Primary API: JioSaavn (Full Songs)
+    // Try a very robust Full Song API (Official-like structure)
     try {
-      const response = await fetch(`https://saavn.dev/api/search/songs?query=${encodeURIComponent(query)}&limit=30`)
-      const res = await response.json()
+      // Using a proxy-less stable instance
+      const response = await fetch(`https://saavn.dev/api/search/songs?query=${encodeURIComponent(query)}&limit=25`);
+      const resData = await response.json();
       
-      if (res.success && res.data?.results?.length > 0) {
-        console.log("Full songs found!");
-        const formatted = res.data.results.map(item => {
-          // Get the best quality download link (usually 320kbps is at the end)
-          const downloadUrl = item.downloadUrl[item.downloadUrl.length - 1].link;
-          const artwork = item.image[item.image.length - 1].link;
+      const results = resData.data?.results || resData.data || [];
+      
+      if (Array.isArray(results) && results.length > 0) {
+        const formatted = results.map(item => {
+          // Helper to get highest quality link
+          const getLink = (arr) => {
+            if (!arr || !Array.isArray(arr)) return arr;
+            return arr[arr.length - 1]?.link || arr[arr.length - 1];
+          };
 
           return {
-            id: item.id,
-            title: item.name,
-            artist: item.artists?.primary?.[0]?.name || 'Unknown Artist',
-            album: item.album?.name || '',
+            id: item.id || Math.random().toString(),
+            title: item.name || item.title,
+            artist: item.artists?.primary?.[0]?.name || item.artist || 'Unknown Artist',
+            album: item.album?.name || item.album || '',
             duration: parseInt(item.duration) || 0,
-            url: downloadUrl,
-            artwork: artwork,
-            genre: 'Music',
+            url: getLink(item.downloadUrl),
+            artwork: getLink(item.image),
+            genre: 'Song',
             isFull: true
-          }
+          };
         }).filter(s => s.url);
 
         if (formatted.length > 0) {
-          setSearchResults(formatted)
-          return
+          setSearchResults(formatted);
+          return; // FOUND FULL SONGS
         }
       }
-    } catch (error) {
-      console.warn("Full song API failed, trying alternate...");
+    } catch (e) {
+      console.warn("Full song search failed, trying fallback...");
     }
 
-    // Alternate Full Song API
+    // Fallback to iTunes only if Saavn is totally dead
     try {
-      const response = await fetch(`https://jiosaavn-api-v3.vercel.app/search/songs?query=${encodeURIComponent(query)}`)
-      const res = await response.json()
-      const results = res.data?.results || res.data || [];
-
-      if (results.length > 0) {
-        console.log("Full songs found via alternate!");
-        const formatted = results.map(item => ({
-          id: item.id,
-          title: item.name,
-          artist: item.artists?.primary?.[0]?.name || 'Unknown Artist',
-          album: item.album?.name || '',
-          duration: parseInt(item.duration) || 0,
-          url: item.downloadUrl[item.downloadUrl.length - 1].link,
-          artwork: item.image[item.image.length - 1].link,
-          genre: 'Music',
-          isFull: true
-        })).filter(s => s.url);
-
-        if (formatted.length > 0) {
-          setSearchResults(formatted)
-          return
-        }
-      }
-    } catch (error) {
-      console.warn("Alternate full song API also failed.");
-    }
-
-    // Last Resort: iTunes (Only 30s Previews)
-    try {
-      console.log("Falling back to iTunes (30s previews)");
-      const itunesRes = await fetch(`https://itunes.apple.com/search?term=${encodeURIComponent(query)}&entity=song&limit=20`)
+      const itunesRes = await fetch(`https://itunes.apple.com/search?term=${encodeURIComponent(query)}&entity=song&limit=30`)
       const itunesData = await itunesRes.json()
       if (itunesData.results) {
         setSearchResults(itunesData.results.map(item => ({
           id: item.trackId.toString(),
-          title: item.trackName + ' (30s Preview Only)',
+          title: item.trackName + ' (Preview Only)',
           artist: item.artistName,
           album: item.collectionName,
           duration: 30,
