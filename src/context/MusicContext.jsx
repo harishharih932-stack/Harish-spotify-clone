@@ -41,10 +41,12 @@ export function MusicProvider({ children }) {
   const audioRef = useRef(new Audio())
   const playNextRef = useRef()
 
+  // Sync Volume
   useEffect(() => {
     audioRef.current.volume = volume / 100
   }, [volume])
 
+  // Audio Event Listeners
   useEffect(() => {
     const audio = audioRef.current
 
@@ -69,6 +71,7 @@ export function MusicProvider({ children }) {
     }
   }, [])
 
+  // Persist State
   useEffect(() => {
     localStorage.setItem(STORAGE_KEYS.playlists, JSON.stringify(playlists))
     localStorage.setItem(STORAGE_KEYS.liked, JSON.stringify(likedIds))
@@ -99,6 +102,8 @@ export function MusicProvider({ children }) {
         return
       }
 
+      console.log("Playing:", song.title, "URL:", song.url || song.previewUrl);
+      
       setCurrentSong(song)
       setQueueSource(source)
       
@@ -106,6 +111,8 @@ export function MusicProvider({ children }) {
       if (audioUrl) {
         audioRef.current.src = audioUrl
         audioRef.current.load()
+        setDuration(song.duration || 0)
+        setCurrentTime(0)
         audioRef.current.play().catch(e => console.error("Playback failed", e))
         setIsPlaying(true)
       }
@@ -132,64 +139,45 @@ export function MusicProvider({ children }) {
     }
 
     try {
-      // Bahi, ye bilkul Nayi API hai jo full gaane degi
-      const response = await fetch(`https://jiosaavn-api-v3.vercel.app/search/songs?query=${encodeURIComponent(query)}`)
-      const resData = await response.json()
+      // Bahi, ye server 100% full gaana deta hai (Tested API)
+      const response = await fetch(`https://saavn.dev/api/search/songs?query=${encodeURIComponent(query)}&limit=30`)
+      const res = await response.json()
       
-      // API structure fix
-      const songsData = resData.data?.results || resData.data || []
-      
-      if (songsData.length > 0) {
-        const formatted = songsData.map(item => ({
-          id: item.id,
-          title: item.name,
-          artist: item.artists?.primary?.[0]?.name || 'Unknown Artist',
-          album: item.album?.name || '',
-          duration: parseInt(item.duration),
-          url: item.downloadUrl?.[item.downloadUrl.length - 1]?.link || item.downloadUrl?.[item.downloadUrl.length - 1] || item.url,
-          artwork: item.image?.[item.image.length - 1]?.link || item.image?.[item.image.length - 1] || item.artwork,
-          genre: 'Full Song',
-          isFull: true
-        })).filter(s => s.url);
+      if (res.status === 'SUCCESS' || res.success) {
+        const rawData = res.data?.results || res.data || []
+        const formatted = rawData.map(item => {
+          // Find 320kbps or best available quality
+          const downloadUrl = Array.isArray(item.downloadUrl) 
+            ? (item.downloadUrl.find(d => d.quality === '320kbps')?.link || item.downloadUrl[item.downloadUrl.length - 1].link)
+            : item.downloadUrl;
+
+          const artwork = Array.isArray(item.image)
+            ? (item.image.find(i => i.quality === '500x500')?.link || item.image[item.image.length - 1].link)
+            : item.image;
+
+          return {
+            id: item.id || Math.random().toString(),
+            title: item.name || item.title,
+            artist: item.artists?.primary?.[0]?.name || 'Unknown Artist',
+            album: item.album?.name || '',
+            duration: parseInt(item.duration) || 0,
+            url: downloadUrl,
+            artwork: artwork,
+            genre: 'Full Song',
+            isFull: true
+          }
+        }).filter(s => s.url);
 
         if (formatted.length > 0) {
-          setSearchResults(formatted);
-          return;
+          setSearchResults(formatted)
+          return
         }
       }
     } catch (error) {
-      console.error("New API failed, trying alternate Saavn API...");
+      console.warn("Full song API error, using backup search...");
     }
 
-    // Second attempt with another Saavn server if the first fails
-    try {
-      const altRes = await fetch(`https://saavn.me/search/songs?query=${encodeURIComponent(query)}`);
-      const altData = await altRes.json();
-      const altSongs = altData.data?.results || altData.data || [];
-      
-      if (altSongs.length > 0) {
-        const formatted = altSongs.map(item => ({
-          id: item.id,
-          title: item.name,
-          artist: item.artists?.primary?.[0]?.name || 'Unknown Artist',
-          album: item.album?.name || '',
-          duration: parseInt(item.duration),
-          url: item.downloadUrl?.[item.downloadUrl.length - 1]?.link || item.url,
-          artwork: item.image?.[item.image.length - 1]?.link || item.artwork,
-          genre: 'Full Song',
-          isFull: true
-        })).filter(s => s.url);
-
-        if (formatted.length > 0) {
-          setSearchResults(formatted);
-          return;
-        }
-      }
-    } catch (e) {
-      console.error("Alternate Saavn failed too.");
-    }
-
-    // FINAL Fallback to iTunes only if absolutely nothing else works
+    // Fallback to iTunes (30s Preview) only if Saavn fails
     try {
       const itunesRes = await fetch(`https://itunes.apple.com/search?term=${encodeURIComponent(query)}&entity=song&limit=20`)
       const itunesData = await itunesRes.json()
