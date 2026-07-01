@@ -100,8 +100,6 @@ export function MusicProvider({ children }) {
         return
       }
 
-      console.log("Playing Song:", song.title, song.url ? "(Full)" : "(Preview)");
-      
       setCurrentSong(song)
       setQueueSource(source)
       
@@ -135,59 +133,57 @@ export function MusicProvider({ children }) {
     }
 
     setIsSearching(true)
-    console.log("Searching for:", query)
-
     let results = []
 
-    // Try a very reliable Saavn API
-    try {
-      const resp = await fetch(`https://saavn.dev/api/search/songs?query=${encodeURIComponent(query)}&limit=30`)
-      const json = await resp.json()
-      const data = json.data?.results || json.data || []
-      
-      if (Array.isArray(data) && data.length > 0) {
-        results = data.map(item => ({
-          id: item.id,
-          title: item.name,
-          artist: item.artists?.primary?.[0]?.name || 'Unknown Artist',
-          album: item.album?.name || '',
-          duration: parseInt(item.duration) || 0,
-          url: item.downloadUrl?.[item.downloadUrl.length - 1]?.link || item.downloadUrl,
-          artwork: item.image?.[item.image.length - 1]?.link || item.image,
-          genre: 'Full Song',
-          isFull: true
-        })).filter(s => s.url)
-      }
-    } catch (e) {
-      console.warn("Primary API failed", e)
-    }
+    const apis = [
+      `https://saavn.dev/api/search/songs?query=${encodeURIComponent(query)}&limit=30`,
+      `https://jiosaavn-api-v3.vercel.app/search/songs?query=${encodeURIComponent(query)}`,
+      `https://saavn.me/api/search/songs?query=${encodeURIComponent(query)}`
+    ]
 
-    // Fallback to secondary Saavn API
-    if (results.length === 0) {
+    for (const api of apis) {
       try {
-        const resp = await fetch(`https://saavn.me/search/songs?query=${encodeURIComponent(query)}`)
+        const resp = await fetch(api)
+        if (!resp.ok) continue
         const json = await resp.json()
         const data = json.data?.results || json.data || []
         
         if (Array.isArray(data) && data.length > 0) {
-          results = data.map(item => ({
-            id: item.id,
-            title: item.name,
-            artist: item.artists?.primary?.[0]?.name || 'Unknown Artist',
-            album: item.album?.name || '',
-            duration: parseInt(item.duration) || 0,
-            url: item.downloadUrl?.[item.downloadUrl.length - 1]?.link || item.downloadUrl,
-            artwork: item.image?.[item.image.length - 1]?.link || item.image,
-            genre: 'Full Song',
-            isFull: true
-          })).filter(s => s.url)
+          results = data.map(item => {
+            let url = ''
+            if (Array.isArray(item.downloadUrl)) {
+              url = item.downloadUrl[item.downloadUrl.length - 1]?.link || item.downloadUrl[item.downloadUrl.length - 1]
+            } else {
+              url = item.downloadUrl
+            }
+
+            let artwork = ''
+            if (Array.isArray(item.image)) {
+              artwork = item.image[item.image.length - 1]?.link || item.image[item.image.length - 1]
+            } else {
+              artwork = item.image
+            }
+
+            return {
+              id: item.id,
+              title: item.name,
+              artist: item.artists?.primary?.[0]?.name || item.artist || 'Unknown Artist',
+              album: item.album?.name || '',
+              duration: parseInt(item.duration) || 0,
+              url: url,
+              artwork: artwork,
+              genre: 'Full Song',
+              isFull: true
+            }
+          }).filter(s => s.url)
+          
+          if (results.length > 0) break 
         }
       } catch (e) {
-        console.warn("Secondary API failed", e)
+        console.warn("API failed:", api)
       }
     }
 
-    // Last resort: iTunes (30s) but with a clear marker
     if (results.length === 0) {
       try {
         const resp = await fetch(`https://itunes.apple.com/search?term=${encodeURIComponent(query)}&entity=song&limit=30`)
@@ -195,7 +191,7 @@ export function MusicProvider({ children }) {
         if (json.results) {
           results = json.results.map(item => ({
             id: item.trackId.toString(),
-            title: item.trackName + ' (30s Preview Only)',
+            title: item.trackName + ' (30s Preview)',
             artist: item.artistName,
             album: item.collectionName,
             duration: 30,
@@ -210,7 +206,6 @@ export function MusicProvider({ children }) {
       }
     }
 
-    console.log("Found results:", results.length)
     setSearchResults(results)
     setIsSearching(false)
   }, [])
