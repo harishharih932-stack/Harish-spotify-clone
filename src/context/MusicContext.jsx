@@ -32,6 +32,7 @@ export function MusicProvider({ children }) {
   const [repeat, setRepeat] = useState(false)
   const [queueSource, setQueueSource] = useState(mockSongs)
   const [searchResults, setSearchResults] = useState([])
+  const [isSearching, setIsSearching] = useState(false)
 
   const [playlists, setPlaylists] = useState(() => loadJSON(STORAGE_KEYS.playlists, []))
   const [likedIds, setLikedIds] = useState(() => loadJSON(STORAGE_KEYS.liked, []))
@@ -99,6 +100,8 @@ export function MusicProvider({ children }) {
         return
       }
 
+      console.log("Playing Song:", song.title, song.url ? "(Full)" : "(Preview)");
+      
       setCurrentSong(song)
       setQueueSource(source)
       
@@ -126,69 +129,90 @@ export function MusicProvider({ children }) {
   }, [currentSong, isPlaying])
 
   const searchSongs = useCallback(async (query) => {
-    if (!query) {
+    if (!query || query.length < 2) {
       setSearchResults([])
       return
     }
 
-    // Try a very robust Full Song API (Official-like structure)
-    try {
-      // Using a proxy-less stable instance
-      const response = await fetch(`https://saavn.dev/api/search/songs?query=${encodeURIComponent(query)}&limit=25`);
-      const resData = await response.json();
-      
-      const results = resData.data?.results || resData.data || [];
-      
-      if (Array.isArray(results) && results.length > 0) {
-        const formatted = results.map(item => {
-          // Helper to get highest quality link
-          const getLink = (arr) => {
-            if (!arr || !Array.isArray(arr)) return arr;
-            return arr[arr.length - 1]?.link || arr[arr.length - 1];
-          };
+    setIsSearching(true)
+    console.log("Searching for:", query)
 
-          return {
-            id: item.id || Math.random().toString(),
-            title: item.name || item.title,
-            artist: item.artists?.primary?.[0]?.name || item.artist || 'Unknown Artist',
-            album: item.album?.name || item.album || '',
+    let results = []
+
+    // Try a very reliable Saavn API
+    try {
+      const resp = await fetch(`https://saavn.dev/api/search/songs?query=${encodeURIComponent(query)}&limit=30`)
+      const json = await resp.json()
+      const data = json.data?.results || json.data || []
+      
+      if (Array.isArray(data) && data.length > 0) {
+        results = data.map(item => ({
+          id: item.id,
+          title: item.name,
+          artist: item.artists?.primary?.[0]?.name || 'Unknown Artist',
+          album: item.album?.name || '',
+          duration: parseInt(item.duration) || 0,
+          url: item.downloadUrl?.[item.downloadUrl.length - 1]?.link || item.downloadUrl,
+          artwork: item.image?.[item.image.length - 1]?.link || item.image,
+          genre: 'Full Song',
+          isFull: true
+        })).filter(s => s.url)
+      }
+    } catch (e) {
+      console.warn("Primary API failed", e)
+    }
+
+    // Fallback to secondary Saavn API
+    if (results.length === 0) {
+      try {
+        const resp = await fetch(`https://saavn.me/search/songs?query=${encodeURIComponent(query)}`)
+        const json = await resp.json()
+        const data = json.data?.results || json.data || []
+        
+        if (Array.isArray(data) && data.length > 0) {
+          results = data.map(item => ({
+            id: item.id,
+            title: item.name,
+            artist: item.artists?.primary?.[0]?.name || 'Unknown Artist',
+            album: item.album?.name || '',
             duration: parseInt(item.duration) || 0,
-            url: getLink(item.downloadUrl),
-            artwork: getLink(item.image),
-            genre: 'Song',
+            url: item.downloadUrl?.[item.downloadUrl.length - 1]?.link || item.downloadUrl,
+            artwork: item.image?.[item.image.length - 1]?.link || item.image,
+            genre: 'Full Song',
             isFull: true
-          };
-        }).filter(s => s.url);
-
-        if (formatted.length > 0) {
-          setSearchResults(formatted);
-          return; // FOUND FULL SONGS
+          })).filter(s => s.url)
         }
+      } catch (e) {
+        console.warn("Secondary API failed", e)
       }
-    } catch (e) {
-      console.warn("Full song search failed, trying fallback...");
     }
 
-    // Fallback to iTunes only if Saavn is totally dead
-    try {
-      const itunesRes = await fetch(`https://itunes.apple.com/search?term=${encodeURIComponent(query)}&entity=song&limit=30`)
-      const itunesData = await itunesRes.json()
-      if (itunesData.results) {
-        setSearchResults(itunesData.results.map(item => ({
-          id: item.trackId.toString(),
-          title: item.trackName + ' (Preview Only)',
-          artist: item.artistName,
-          album: item.collectionName,
-          duration: 30,
-          url: item.previewUrl,
-          artwork: item.artworkUrl100.replace('100x100', '600x600'),
-          genre: 'Preview',
-          isFull: false
-        })));
+    // Last resort: iTunes (30s) but with a clear marker
+    if (results.length === 0) {
+      try {
+        const resp = await fetch(`https://itunes.apple.com/search?term=${encodeURIComponent(query)}&entity=song&limit=30`)
+        const json = await resp.json()
+        if (json.results) {
+          results = json.results.map(item => ({
+            id: item.trackId.toString(),
+            title: item.trackName + ' (30s Preview Only)',
+            artist: item.artistName,
+            album: item.collectionName,
+            duration: 30,
+            url: item.previewUrl,
+            artwork: item.artworkUrl100.replace('100x100', '600x600'),
+            genre: 'Preview',
+            isFull: false
+          }))
+        }
+      } catch (e) {
+        console.error("All APIs failed")
       }
-    } catch (e) {
-      setSearchResults([]);
     }
+
+    console.log("Found results:", results.length)
+    setSearchResults(results)
+    setIsSearching(false)
   }, [])
 
   const stepTrack = useCallback(
@@ -212,7 +236,7 @@ export function MusicProvider({ children }) {
   const playNext = useCallback(() => {
     if (repeat) {
       audioRef.current.currentTime = 0
-      audioRef.current.play()
+      audioRef.current.play().catch(() => {})
       return
     }
     stepTrack(1)
@@ -273,6 +297,7 @@ export function MusicProvider({ children }) {
     likedIds,
     recentlyPlayed,
     theme,
+    isSearching,
     playSong,
     togglePlay,
     playNext,
